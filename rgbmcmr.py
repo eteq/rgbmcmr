@@ -12,41 +12,69 @@ MINF = -np.inf
 class RGBModel(emceemr.Model):
     param_names = 'tipmag, alphargb, alphaother, fracother'.split(', ')
 
-    def __init__(self, magdata, magunc=None, priors=None):
+    def __init__(self, magdata, magunc=None, priors=None,
+                       uncfunc=None, biasfunc=None, complfunc=None):
 
         self.magdata = np.array(magdata)
-        self.magunc = None if magunc is None else np.array(magunc)
 
         self.maxdata = np.max(magdata)
         self.mindata = np.min(magdata)
 
+        self._magunc = magunc
+        self._uncfunc = uncfunc
+        self._biasfunc = biasfunc
+        self._complfunc = complfunc
+        self._validate_lnprob_func()
+
         super(RGBModel, self).__init__(priors)
+
+    def _validate_lnprob_func(self):
+        """
+        Checks that the various ways of giving uncertainties or not make sense
+        """
+        if self.magunc is None:
+            if self.uncfunc is not None:
+                self._lnprob_func = _lnprob_uncfuncs
+            else:
+                self._lnprob_func = _lnprob_no_unc
+        elif self.uncfunc is not None:
+            raise ValueError('Cannot give both uncertainties and the various uncfuncs')
+        else:
+            self._lnprob_func = _lnprob_w_unc
+
 
     def lnprob(self, tipmag, alphargb, alphaother, fracother):
         """
         This does *not* sum up the lnprobs - that goes in __call__.  Instead it
         gives the lnprob per data point
         """
+        self._lnprob_func(tipmag, alphargb, alphaother, fracother)
+
+
+    def _lnprob_no_unc(self, tipmag, alphargb, alphaother, fracother):
         dmags = self.magdata - tipmag
-        if self.magunc is None:
-            rgbmsk = dmags > 0
-            lnpall = np.zeros_like(dmags)
+        rgbmsk = dmags > 0
+        lnpall = np.zeros_like(dmags)
 
-            lnpall[rgbmsk] = alphargb * dmags[rgbmsk]
-            lnpall[~rgbmsk] = alphaother * dmags[~rgbmsk] + np.log(fracother)
+        lnpall[rgbmsk] = alphargb * dmags[rgbmsk]
+        lnpall[~rgbmsk] = alphaother * dmags[~rgbmsk] + np.log(fracother)
 
-            eterm1 = 1 - np.exp(alphaother*(self.mindata - tipmag))
-            eterm2 = np.exp(alphargb*(self.maxdata - tipmag)) - 1
-            lnN = np.log(fracother * eterm1 / alphaother + eterm2 / alphargb)
+        eterm1 = 1 - np.exp(alphaother*(self.mindata - tipmag))
+        eterm2 = np.exp(alphargb*(self.maxdata - tipmag)) - 1
+        lnN = np.log(fracother * eterm1 / alphaother + eterm2 / alphargb)
 
-            return lnpall - lnN
-        else:
-            dmag_upper = self.maxdata - tipmag
-            dmag_lower = self.mindata - tipmag
-            return np.log(self._exp_gauss_conv_normed(dmags, alphargb, alphaother,
-                                                     fracother, self.magunc,
-                                                     dmag_lower, dmag_upper))
+        return lnpall - lnN
 
+    def _lnprob_w_unc(self, tipmag, alphargb, alphaother, fracother):
+        dmag_upper = self.maxdata - tipmag
+        dmag_lower = self.mindata - tipmag
+        return np.log(self._exp_gauss_conv_normed(self.magdata - tipmag,
+                                                  alphargb, alphaother,
+                                                  fracother, self.magunc,
+                                                  dmag_lower, dmag_upper))
+
+    def _lnprob_uncfuncs(self, tipmag, alphargb, alphaother, fracother):
+        raise NotImplementedError
 
     def plot_lnprob(self, tipmag, alphargb, alphaother, fracother, magrng=100, doplot=True, delog=False):
         """
@@ -101,6 +129,57 @@ class RGBModel(emceemr.Model):
         term1 = np.exp(ab*(ab*s**2 + x))*(1 + g * erf((ab*s**2 + x)*2**-0.5/s))
         term2 = np.exp(ab**2*s**2 / 2.)*g*erf(x * 2**-0.5 / s)
         return prefactor*(term1 - term2)
+
+    #properties for the alternate uncertainty functions
+    @property
+    def magunc(self):
+        return self._magunc
+    @magunc.setter
+    def magunc(self, value):
+        oldval = self._magunc
+        self._magunc = value
+        try:
+            self._validate_lnprob_func()
+        except:
+            self._magunc = oldval
+            raise
+    @property
+    def uncfunc(self):
+        return self._uncfunc
+    @uncfunc.setter
+    def uncfunc(self, value):
+        oldval = self._uncfunc
+        self._uncfunc = value
+        try:
+            self._validate_lnprob_func()
+        except:
+            self._uncfunc = oldval
+            raise
+    @property
+    def biasfunc(self):
+        return self._biasfunc
+    @biasfunc.setter
+    def biasfunc(self, value):
+        oldval = self._biasfunc
+        self._biasfunc = value
+        try:
+            self._validate_lnprob_func()
+        except:
+            self._biasfunc = oldval
+            raise
+    @property
+    def complfunc(self):
+        return self._complfunc
+    @complfunc.setter
+    def complfunc(self, value):
+        oldval = self._complfunc
+        self._complfunc = value
+        try:
+            self._validate_lnprob_func()
+        except:
+            self._complfunc = oldval
+            raise
+
 
 class NormalColorModel(emceemr.Model):
     param_names = 'colorcen, colorsig, askew'.split(', ')
