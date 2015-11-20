@@ -13,7 +13,8 @@ class RGBModel(emceemr.Model):
     param_names = 'tipmag, alphargb, alphaother, fracother'.split(', ')
 
     def __init__(self, magdata, magunc=None, priors=None,
-                       uncfunc=None, biasfunc=None, complfunc=None):
+                       uncfunc=None, biasfunc=None, complfunc=None,
+                       funcmags=None):
 
         self.magdata = np.array(magdata)
 
@@ -21,6 +22,7 @@ class RGBModel(emceemr.Model):
         self.mindata = np.min(magdata)
 
         self._magunc = magunc
+        self._funcmags = funcmags
         self._uncfunc = uncfunc
         self._biasfunc = biasfunc
         self._complfunc = complfunc
@@ -34,13 +36,13 @@ class RGBModel(emceemr.Model):
         """
         if self.magunc is None:
             if self.uncfunc is not None:
-                self._lnprob_func = _lnprob_uncfuncs
+                self._lnprob_func = self._lnprob_uncfuncs
             else:
-                self._lnprob_func = _lnprob_no_unc
-        elif self.uncfunc is not None:
+                self._lnprob_func = self._lnprob_no_unc
+        elif self.funcmags is not None:
             raise ValueError('Cannot give both uncertainties and the various uncfuncs')
         else:
-            self._lnprob_func = _lnprob_w_unc
+            self._lnprob_func = self._lnprob_w_unc
 
 
     def lnprob(self, tipmag, alphargb, alphaother, fracother):
@@ -48,11 +50,11 @@ class RGBModel(emceemr.Model):
         This does *not* sum up the lnprobs - that goes in __call__.  Instead it
         gives the lnprob per data point
         """
-        self._lnprob_func(tipmag, alphargb, alphaother, fracother)
+        return self._lnprob_func(self.magdata, tipmag, alphargb, alphaother, fracother)
 
 
-    def _lnprob_no_unc(self, tipmag, alphargb, alphaother, fracother):
-        dmags = self.magdata - tipmag
+    def _lnprob_no_unc(self, magdata, tipmag, alphargb, alphaother, fracother):
+        dmags = magdata - tipmag
         rgbmsk = dmags > 0
         lnpall = np.zeros_like(dmags)
 
@@ -65,16 +67,53 @@ class RGBModel(emceemr.Model):
 
         return lnpall - lnN
 
-    def _lnprob_w_unc(self, tipmag, alphargb, alphaother, fracother):
+    def _lnprob_w_unc(self, magdata, tipmag, alphargb, alphaother, fracother):
         dmag_upper = self.maxdata - tipmag
         dmag_lower = self.mindata - tipmag
-        return np.log(self._exp_gauss_conv_normed(self.magdata - tipmag,
+        return np.log(self._exp_gauss_conv_normed(magdata - tipmag,
                                                   alphargb, alphaother,
                                                   fracother, self.magunc,
                                                   dmag_lower, dmag_upper))
 
-    def _lnprob_uncfuncs(self, tipmag, alphargb, alphaother, fracother):
-        raise NotImplementedError
+    def _lnprob_uncfuncs(self, magdata, tipmag, alphargb, alphaother, fracother, _normalizationint=False):
+        funcmags = self._funcmags.reshape(1, self._funcmags.size)
+
+        if self._uncfunc is None:
+            raise ValueError('Funcmags given but uncfunc is None')
+        elif callable(self._uncfunc):
+            uncs = self._uncfunc(funcmags)
+        else:
+            uncs = self._uncfunc
+
+        if self._biasfunc is None:
+            biasedmags = funcmags
+        elif callable(self._biasfunc):
+            biasedmags = self._biasfunc(funcmags)
+        else:
+            biasedmags = self._biasfunc.reshape(1, funcmags.size)
+
+        if self._complfunc is None:
+            compl = 1
+        elif callable(self._complfunc):
+            compl = self._complfunc(funcmags)
+        else:
+            compl = self._complfunc.reshape(1, funcmags.size)
+
+        magdata_reshaped = magdata.reshape(magdata.size, 1)
+
+        lf = self._lnprob_no_unc(magdata_reshaped, tipmag, alphargb, alphaother, fracother)
+        uncterm = (2*np.pi)**-0.5 * np.exp(-0.5*((magdata_reshaped - biasedmags)/uncs)**2)/uncs
+        dataintegrand = compl*uncterm*np.exp(lf)
+
+        Idata = np.trapz(y=dataintegrand, x=funcmags, axis=-1)
+
+        if _normalizationint:
+            return Idata
+        else:
+            intN =  self._lnprob_uncfuncs(funcmags.ravel(),tipmag,alphargb, alphaother, fracother, _normalizationint=True)
+            N = np.trapz(intN, funcmags.ravel())
+            return np.log(Idata) - np.log(N)
+
 
     def plot_lnprob(self, tipmag, alphargb, alphaother, fracother, magrng=100, doplot=True, delog=False):
         """
@@ -82,13 +121,19 @@ class RGBModel(emceemr.Model):
         `magrng` is a scalar, it gives the number of samples over the data
         domain.  If an array, it's used as the x axis.
         """
+        from copy import copy
         from astropy.utils import isiterable
         from matplotlib import pyplot as plt
 
+        fakemod = copy(self)
         if isiterable(magrng):
-            fakemod = self.__class__(magrng)
+            fakemod.magdata = np.sort(magrng)
         else:
-            fakemod = self.__class__(np.linspace(self.mindata, self.maxdata, magrng))
+            fakemod.magdata = np.linspace(self.mindata, self.maxdata, magrng)
+
+        if fakemod.magunc is not None:
+            sorti = np.argsort(self.magdata)
+            fakemod.magunc = np.interp(fakemod.magdata, self.magdata[sorti], self.magunc[sorti])
 
         lnpb = fakemod.lnprob(tipmag, alphargb, alphaother, fracother)
         if delog:
@@ -131,6 +176,18 @@ class RGBModel(emceemr.Model):
         return prefactor*(term1 - term2)
 
     #properties for the alternate uncertainty functions
+    @property
+    def funcmags(self):
+        return self._funcmags
+    @funcmags.setter
+    def funcmags(self, value):
+        oldval = self._funcmags
+        self._funcmags = value
+        try:
+            self._validate_lnprob_func()
+        except:
+            self._funcmags = oldval
+            raise
     @property
     def magunc(self):
         return self._magunc
