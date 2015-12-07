@@ -30,6 +30,23 @@ class RGBModel(emceemr.Model):
 
         super(RGBModel, self).__init__(priors)
 
+
+    @property
+    def sorted_magdata(self):
+        if self._sorted_magdata is None:
+            self._sorted_magdata = np.sort(self.magdata)
+        return self._sorted_magdata
+
+
+    @property
+    def magdata(self):
+        return self._magdata
+    @magdata.setter
+    def magdata(self, value):
+        self._sorted_magdata = None
+        self._magdata = value
+
+
     def _validate_lnprob_func(self):
         """
         Checks that the various ways of giving uncertainties or not make sense
@@ -101,7 +118,7 @@ class RGBModel(emceemr.Model):
 
         magdata_reshaped = magdata.reshape(magdata.size, 1)
 
-        lf = self._lnprob_no_unc(magdata_reshaped, tipmag, alphargb, alphaother, fracother)
+        lf = self._lnprob_no_unc(biasedmags, tipmag, alphargb, alphaother, fracother)
         uncterm = (2*np.pi)**-0.5 * np.exp(-0.5*((magdata_reshaped - biasedmags)/uncs)**2)/uncs
         dataintegrand = compl*uncterm*np.exp(lf)
 
@@ -110,8 +127,11 @@ class RGBModel(emceemr.Model):
         if _normalizationint:
             return Idata
         else:
-            intN =  self._lnprob_uncfuncs(funcmags.ravel(),tipmag,alphargb, alphaother, fracother, _normalizationint=True)
-            N = np.trapz(intN, funcmags.ravel())
+            intN =  self._lnprob_uncfuncs(self.sorted_magdata,tipmag,
+                                          alphargb, alphaother, fracother,
+                                          _normalizationint=True)
+            N = np.trapz(y=intN, x=self.sorted_magdata)
+            self.normed = intN,funcmags.ravel(), N
             return np.log(Idata) - np.log(N)
 
 
