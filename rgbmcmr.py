@@ -1,5 +1,7 @@
 from __future__ import division, print_function
 
+from collections import namedtuple
+
 import numpy as np
 from scipy.special import erf, erfc
 
@@ -12,6 +14,10 @@ MINF = -np.inf
 class RGBModel(emceemr.Model):
     param_names = 'tipmag, alphargb, alphaother, fracother'.split(', ')
 
+    AutoFuncmags = namedtuple('AutoFuncmags', ['startat', 'endat', 'uncspacing'])
+
+
+
     def __init__(self, magdata, magunc=None, priors=None,
                        uncfunc=None, biasfunc=None, complfunc=None,
                        funcmags=None):
@@ -22,13 +28,24 @@ class RGBModel(emceemr.Model):
         self.mindata = np.min(magdata)
 
         self._magunc = magunc
-        self._funcmags = funcmags
+        if isinstance(funcmags, self.AutoFuncmags):
+            self._funcmags = self._auto_funcmags(uncfunc, *funcmags)
+        else:
+            self._funcmags = funcmags
         self._uncfunc = uncfunc
         self._biasfunc = biasfunc
         self._complfunc = complfunc
         self._validate_lnprob_func()
 
         super(RGBModel, self).__init__(priors)
+
+    def _auto_funcmags(self, uncfunc, startat, endat, uncspacing):
+        fmags = [startat]
+        while fmags[-1] < endat:
+            fmags.append(fmags[-1]+np.abs(uncfunc(fmags[-1]))*uncspacing)
+            if fmags[-1] > endat:
+                fmags[-1] = endat
+        return np.array(fmags)
 
 
     @property
@@ -135,7 +152,7 @@ class RGBModel(emceemr.Model):
             return np.log(Idata) - np.log(N)
 
 
-    def plot_lnprob(self, tipmag, alphargb, alphaother, fracother, magrng=100, doplot=True, delog=False):
+    def plot_lnprob(self, tipmag, alphargb, alphaother, fracother, magrng=100, doplot=True, delog=False, **plotkwargs):
         """
         Plots (optionally) and returns arrays suitable for plotting the pdf. If
         `magrng` is a scalar, it gives the number of samples over the data
@@ -160,9 +177,29 @@ class RGBModel(emceemr.Model):
             lnpb = np.exp(lnpb - np.min(lnpb))
 
         if doplot:
-            plt.plot(fakemod.magdata, lnpb)
+            plt.plot(fakemod.magdata, lnpb, **plotkwargs)
 
         return fakemod.magdata, lnpb
+
+    def plot_data_and_model(self, samplerorparams, perc=50, datakwargs={}, lfkwargs={}):
+        from astropy.utils import isiterable
+        from matplotlib import pyplot as plt
+
+        if isiterable(samplerorparams):
+            ps = samplerorparams
+        else:
+            sampler = samplerorparams
+            ps = np.percentile(sampler.flatchain, perc, axis=0)
+        self.plot_lnprob(*ps, **lfkwargs)
+
+        n, edges = np.histogram(self.magdata, bins=datakwargs.pop('bins', 100))
+        cens = (edges[1:]+edges[:-1])/2
+        N = np.trapz(x=cens, y=n)
+        plt.scatter(cens, np.log(n/N), **datakwargs)
+
+        plt.ylabel('log(lf/data)')
+
+
 
     @staticmethod
     def _exp_gauss_conv_normed(x, a, b, F, s, x_lower, x_upper):
