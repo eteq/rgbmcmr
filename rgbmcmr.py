@@ -42,7 +42,11 @@ class RGBModel(emceemr.Model):
     def _auto_funcmags(self, uncfunc, startat, endat, uncspacing):
         fmags = [startat]
         while fmags[-1] < endat:
-            fmags.append(fmags[-1]+np.abs(uncfunc(fmags[-1]))*uncspacing)
+            dmag = abs(uncfunc(fmags[-1])*uncspacing)
+            if dmag==0:
+                raise ValueError('auto_funcmags got stuck at an unc of 0. Might'
+                                 ' your uncfunc be non-positive somewhere?')
+            fmags.append(fmags[-1]+dmag)
             if fmags[-1] > endat:
                 fmags[-1] = endat
         return np.array(fmags)
