@@ -12,6 +12,9 @@ MINF = -np.inf
 
 
 class RGBModel(emceemr.Model):
+    """
+    Note if biasfunc is used, the sense is mag_real = mag_measured + bias
+    """
     param_names = 'tipmag, alphargb, alphaother, fracother'.split(', ')
 
     AutoFuncmags = namedtuple('AutoFuncmags', ['startat', 'endat', 'uncspacing'])
@@ -137,9 +140,9 @@ class RGBModel(emceemr.Model):
         if self._biasfunc is None:
             biasedmags = funcmags
         elif callable(self._biasfunc):
-            biasedmags = self._biasfunc(funcmags)
+            biasedmags = funcmags - self._biasfunc(funcmags)
         else:
-            biasedmags = self._biasfunc.reshape(1, funcmags.size)
+            biasedmags = funcmags - self._biasfunc.reshape(1, funcmags.size)
 
         if self._complfunc is None:
             compl = 1
