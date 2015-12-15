@@ -82,6 +82,17 @@ class RGBModel(emceemr.Model):
         else:
             self._lnprob_func = self._lnprob_w_unc
 
+    # need to do getstate/setstate b/c _lnprob_func can't be pickled as a method
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        if state['_lnprob_func'] is not None:
+            state['_lnprob_func'] = self._lnprob_func.im_func.__name__
+        return state
+
+    def __setstate__(self, state):
+        meth = getattr(self, state['_lnprob_func'])
+        state['_lnprob_func'] = meth
+        self.__dict__ = state
 
     def lnprob(self, tipmag, alphargb, alphaother, fracother):
         """
