@@ -1,3 +1,3 @@
 [submodule "emceemr"]
-	path = emceemr
+	path = emceemr_repo
 	url = https://github.com/eteq/emceemr
